@@ -63,22 +63,21 @@ async function geocodeAddress(address: string): Promise<{ lat: number; lng: numb
 
 async function fetchNearbyHospitals(lat: number, lng: number): Promise<ClinicResult[]> {
   const radius = 10000;
-  // Compact single-line query — smaller URL, faster Overpass processing
   const query = `[out:json][timeout:25];(node["amenity"~"^(hospital|clinic)$"](around:${radius},${lat},${lng});way["amenity"~"^(hospital|clinic)$"](around:${radius},${lat},${lng});node["healthcare"="hospital"](around:${radius},${lat},${lng});way["healthcare"="hospital"](around:${radius},${lat},${lng}););out center tags;`;
 
-  // GET request — no body encoding overhead, cacheable, no CORS preflight
-  const primaryUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
-  const fallbackUrl = `https://overpass.kumi.systems/api/interpreter?data=${encodeURIComponent(query)}`;
-
-  let res: Response;
+  let data: any;
   try {
-    res = await fetch(primaryUrl);
-    if (!res.ok) throw new Error(`${res.status}`);
+    // Proxy exists on Vercel — check Content-Type to detect Vite's HTML fallback on localhost
+    const proxyRes = await fetch(`/api/clinics?lat=${lat}&lng=${lng}`);
+    const ct = proxyRes.headers.get("content-type") ?? "";
+    if (!proxyRes.ok || !ct.includes("json")) throw new Error("proxy unavailable");
+    data = await proxyRes.json();
+    if (!data.elements) throw new Error("bad response");
   } catch {
-    res = await fetch(fallbackUrl);
+    // Localhost fallback: hit Overpass directly
+    const directRes = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
+    data = await directRes.json();
   }
-
-  const data = await res.json();
   const elements: any[] = data.elements ?? [];
 
   return elements
@@ -297,7 +296,7 @@ export default function Clinics() {
               <div>
                 <p className="font-medium text-foreground">Searching near: {locationLabel}</p>
                 <p className="text-sm text-muted-foreground">
-                  Showing {filteredResults.length} facilit{filteredResults.length === 1 ? "y" : "ies"} within 15 km
+                  Showing {filteredResults.length} facilit{filteredResults.length === 1 ? "y" : "ies"} within 10 km
                 </p>
               </div>
             </div>
