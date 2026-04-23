@@ -8,6 +8,7 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle } from "@/components/u
 import { useState, useEffect } from "react";
 import { useNavigate } from "react-router-dom";
 import { Navigation } from "@/components/layout/navigation";
+import { Footer } from "@/components/sections/footer";
 import { supabase } from "@/lib/supabase";
 import { useAuth } from "@/contexts/AuthContext";
 import type { Vital, Task } from "@/lib/supabase";
@@ -547,6 +548,8 @@ export default function Dashboard() {
           </Card>
         </div>
       </div>
+
+      <Footer />
     </div>
   );
 }
