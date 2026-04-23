@@ -62,30 +62,20 @@ async function geocodeAddress(address: string): Promise<{ lat: number; lng: numb
 }
 
 async function fetchNearbyHospitals(lat: number, lng: number): Promise<ClinicResult[]> {
-  const radius = 15000;
-  const query = `
-[out:json][timeout:30];
-(
-  node["amenity"="hospital"](around:${radius},${lat},${lng});
-  way["amenity"="hospital"](around:${radius},${lat},${lng});
-  node["amenity"="clinic"](around:${radius},${lat},${lng});
-  way["amenity"="clinic"](around:${radius},${lat},${lng});
-  node["healthcare"="hospital"](around:${radius},${lat},${lng});
-  way["healthcare"="hospital"](around:${radius},${lat},${lng});
-);
-out center tags;
-  `.trim();
+  const radius = 10000;
+  // Compact single-line query — smaller URL, faster Overpass processing
+  const query = `[out:json][timeout:25];(node["amenity"~"^(hospital|clinic)$"](around:${radius},${lat},${lng});way["amenity"~"^(hospital|clinic)$"](around:${radius},${lat},${lng});node["healthcare"="hospital"](around:${radius},${lat},${lng});way["healthcare"="hospital"](around:${radius},${lat},${lng}););out center tags;`;
 
-  const body = "data=" + encodeURIComponent(query);
-  const headers = { "Content-Type": "application/x-www-form-urlencoded" };
+  // GET request — no body encoding overhead, cacheable, no CORS preflight
+  const primaryUrl = `https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`;
+  const fallbackUrl = `https://overpass.kumi.systems/api/interpreter?data=${encodeURIComponent(query)}`;
 
-  // Let Overpass handle its own timeout server-side — no AbortController needed
   let res: Response;
   try {
-    res = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", headers, body });
-    if (!res.ok) throw new Error(`Overpass primary returned ${res.status}`);
+    res = await fetch(primaryUrl);
+    if (!res.ok) throw new Error(`${res.status}`);
   } catch {
-    res = await fetch("https://overpass.kumi.systems/api/interpreter", { method: "POST", headers, body });
+    res = await fetch(fallbackUrl);
   }
 
   const data = await res.json();
