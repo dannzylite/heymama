@@ -49,7 +49,7 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
 }
 
 async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
-  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&email=heymamacare@gmail.com`;
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&countrycodes=ng&email=heymamacare@gmail.com`;
   const res = await fetch(url);
   const data = await res.json();
   if (!data.length) return null;
