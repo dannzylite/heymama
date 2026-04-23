@@ -76,33 +76,28 @@ async function fetchNearbyHospitals(lat: number, lng: number): Promise<ClinicRes
 out center tags;
   `.trim();
 
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 35000);
+  const body = "data=" + encodeURIComponent(query);
+  const headers = { "Content-Type": "application/x-www-form-urlencoded" };
 
+  // Let Overpass handle its own timeout server-side — no AbortController needed
   let res: Response;
   try {
-    // Overpass requires form-encoded body in production browsers
-    res = await fetch("https://overpass-api.de/api/interpreter", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "data=" + encodeURIComponent(query),
-      signal: controller.signal,
-    });
+    res = await fetch("https://overpass-api.de/api/interpreter", { method: "POST", headers, body });
+    if (!res.ok) throw new Error(`Overpass primary returned ${res.status}`);
   } catch {
-    // Fallback to mirror if primary is down
-    res = await fetch("https://overpass.kumi.systems/api/interpreter", {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: "data=" + encodeURIComponent(query),
-    });
-  } finally {
-    clearTimeout(timer);
+    res = await fetch("https://overpass.kumi.systems/api/interpreter", { method: "POST", headers, body });
   }
 
-  const data = await res!.json();
+  const data = await res.json();
+  const elements: any[] = data.elements ?? [];
 
-  return (data.elements as any[])
-    .filter((el) => el.tags?.name)
+  return elements
+    .filter((el) => {
+      // Must have a name and valid coordinates
+      const elLat = el.lat ?? el.center?.lat;
+      const elLng = el.lon ?? el.center?.lon;
+      return el.tags?.name && elLat != null && elLng != null;
+    })
     .map((el) => {
       const elLat = el.lat ?? el.center?.lat;
       const elLng = el.lon ?? el.center?.lon;
@@ -165,15 +160,21 @@ export default function Clinics() {
   async function runSearch(lat: number, lng: number, label: string) {
     setIsSearching(true);
     setLocationLabel(label);
+    setHasSearched(true);
     try {
       const clinics = await fetchNearbyHospitals(lat, lng);
       setResults(clinics);
-      setHasSearched(true);
       if (clinics.length === 0) {
         toast({ title: "No facilities found", description: "Try expanding your search area." });
       }
     } catch {
-      toast({ title: "Search failed", description: "Could not fetch nearby hospitals. Please try again.", variant: "destructive" });
+      // Only alert if we have nothing to show — don't interrupt visible results
+      setResults((prev) => {
+        if (prev.length === 0) {
+          toast({ title: "Search failed", description: "Could not reach hospital data. Please try again.", variant: "destructive" });
+        }
+        return prev;
+      });
     } finally {
       setIsSearching(false);
     }
