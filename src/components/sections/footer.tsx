@@ -3,7 +3,7 @@ import { Heart, Mail } from "lucide-react";
 export function Footer() {
   const team = [
     "Ifeloluwa Adeife Oyewole",
-    "Okorie Daniel",
+    "Okorie Daniel Chinonso",
     "Onyenakorom Tochukwu Samuel",
     "Atobatele Oluwasegun Isaac",
     "Ngeri Belema Tosin",
@@ -40,20 +40,6 @@ export function Footer() {
             <h4 className="font-bold text-lg">Get Involved</h4>
             <p className="text-background/80">Help us save mothers' lives</p>
             <div className="flex space-x-5">
-              {/* Instagram */}
-              <a
-                href="https://www.instagram.com/heymamacare01?igsh=NXYyMm56b3Y1M2s5&utm_source=qr"
-                target="_blank"
-                rel="noopener noreferrer"
-                aria-label="Instagram"
-                className="text-background/60 hover:text-background transition-colors"
-              >
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                  <rect width="20" height="20" x="2" y="2" rx="5" ry="5"/>
-                  <path d="M16 11.37A4 4 0 1 1 12.63 8 4 4 0 0 1 16 11.37z"/>
-                  <line x1="17.5" x2="17.51" y1="6.5" y2="6.5"/>
-                </svg>
-              </a>
               {/* X / Twitter */}
               <a
                 href="https://x.com/heymamacare"

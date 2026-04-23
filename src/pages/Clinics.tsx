@@ -48,15 +48,21 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
 }
 
 async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
-  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1`;
-  const res = await fetch(url, { headers: { "Accept-Language": "en" } });
-  const data = await res.json();
-  if (data.length === 0) return null;
-  return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+  const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&email=heymamacare@gmail.com`;
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 10000);
+  try {
+    const res = await fetch(url, { signal: controller.signal });
+    const data = await res.json();
+    if (data.length === 0) return null;
+    return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 async function fetchNearbyHospitals(lat: number, lng: number): Promise<ClinicResult[]> {
-  const radius = 15000; // 15 km
+  const radius = 15000;
   const query = `
 [out:json][timeout:30];
 (
@@ -70,11 +76,30 @@ async function fetchNearbyHospitals(lat: number, lng: number): Promise<ClinicRes
 out center tags;
   `.trim();
 
-  const res = await fetch("https://overpass-api.de/api/interpreter", {
-    method: "POST",
-    body: query,
-  });
-  const data = await res.json();
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), 35000);
+
+  let res: Response;
+  try {
+    // Overpass requires form-encoded body in production browsers
+    res = await fetch("https://overpass-api.de/api/interpreter", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "data=" + encodeURIComponent(query),
+      signal: controller.signal,
+    });
+  } catch {
+    // Fallback to mirror if primary is down
+    res = await fetch("https://overpass.kumi.systems/api/interpreter", {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: "data=" + encodeURIComponent(query),
+    });
+  } finally {
+    clearTimeout(timer);
+  }
+
+  const data = await res!.json();
 
   return (data.elements as any[])
     .filter((el) => el.tags?.name)
@@ -176,7 +201,7 @@ export default function Clinics() {
         let label = "Your current location";
         try {
           const res = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json`
+            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&email=heymamacare@gmail.com`
           );
           const data = await res.json();
           label = data.display_name ?? label;
