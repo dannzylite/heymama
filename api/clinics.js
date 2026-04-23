@@ -1,4 +1,6 @@
 export default async function handler(req, res) {
+  res.setHeader("Access-Control-Allow-Origin", "*");
+
   const { lat, lng } = req.query;
 
   if (!lat || !lng) {
@@ -12,14 +14,13 @@ export default async function handler(req, res) {
 
   try {
     const overpassRes = await fetch(url);
-    if (!overpassRes.ok) throw new Error(`Overpass ${overpassRes.status}`);
+    if (!overpassRes.ok) {
+      return res.status(502).json({ error: `Overpass returned ${overpassRes.status}` });
+    }
     const data = await overpassRes.json();
-
-    // Cache results for 5 minutes at the edge
     res.setHeader("Cache-Control", "s-maxage=300, stale-while-revalidate=600");
-    res.setHeader("Access-Control-Allow-Origin", "*");
     return res.status(200).json(data);
   } catch (err) {
-    return res.status(500).json({ error: err.message });
+    return res.status(500).json({ error: String(err) });
   }
 }
