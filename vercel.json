@@ -1,5 +1,7 @@
 {
-  "rewrites": [
-    { "source": "/((?!api/).*)", "destination": "/index.html" }
-  ]
+  "functions": {
+    "api/clinics.js": {
+      "runtime": "nodejs18.x"
+    }
+  }
 }

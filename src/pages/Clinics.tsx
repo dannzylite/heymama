@@ -7,22 +7,22 @@ import {
   MapPin,
   Navigation as NavIcon,
   Phone,
-  Clock,
-  Star,
   Search,
   Filter,
   Hospital,
-  Stethoscope,
   Car,
   Shield,
   Loader2,
-  LocateFixed
+  LocateFixed,
+  Star,
 } from "lucide-react";
 import { useToast } from "@/hooks/use-toast";
 import { Navigation } from "@/components/layout/navigation";
 
+const GOOGLE_KEY = import.meta.env.VITE_GOOGLE_MAPS_KEY as string;
+
 interface ClinicResult {
-  id: number;
+  id: string;
   name: string;
   type: string;
   address: string;
@@ -31,7 +31,8 @@ interface ClinicResult {
   lat: number;
   lng: number;
   phone: string;
-  emergency: boolean;
+  rating?: number;
+  openNow?: boolean;
 }
 
 function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
@@ -49,75 +50,58 @@ function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number) {
 
 async function geocodeAddress(address: string): Promise<{ lat: number; lng: number } | null> {
   const url = `https://nominatim.openstreetmap.org/search?q=${encodeURIComponent(address)}&format=json&limit=1&email=heymamacare@gmail.com`;
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), 10000);
-  try {
-    const res = await fetch(url, { signal: controller.signal });
-    const data = await res.json();
-    if (data.length === 0) return null;
-    return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
-  } finally {
-    clearTimeout(timer);
-  }
+  const res = await fetch(url);
+  const data = await res.json();
+  if (!data.length) return null;
+  return { lat: parseFloat(data[0].lat), lng: parseFloat(data[0].lon) };
 }
 
 async function fetchNearbyHospitals(lat: number, lng: number): Promise<ClinicResult[]> {
-  const radius = 10000;
-  const query = `[out:json][timeout:25];(node["amenity"~"^(hospital|clinic)$"](around:${radius},${lat},${lng});way["amenity"~"^(hospital|clinic)$"](around:${radius},${lat},${lng});node["healthcare"="hospital"](around:${radius},${lat},${lng});way["healthcare"="hospital"](around:${radius},${lat},${lng}););out center tags;`;
+  const res = await fetch("https://places.googleapis.com/v1/places:searchNearby", {
+    method: "POST",
+    headers: {
+      "Content-Type": "application/json",
+      "X-Goog-Api-Key": GOOGLE_KEY,
+      "X-Goog-FieldMask":
+        "places.displayName,places.formattedAddress,places.location,places.nationalPhoneNumber,places.rating,places.regularOpeningHours,places.types",
+    },
+    body: JSON.stringify({
+      includedTypes: ["hospital", "medical_clinic"],
+      locationRestriction: {
+        circle: {
+          center: { latitude: lat, longitude: lng },
+          radius: 10000,
+        },
+      },
+      maxResultCount: 20,
+    }),
+  });
 
-  let data: any;
-  try {
-    // Proxy exists on Vercel — check Content-Type to detect Vite's HTML fallback on localhost
-    const proxyRes = await fetch(`/api/clinics?lat=${lat}&lng=${lng}`);
-    const ct = proxyRes.headers.get("content-type") ?? "";
-    if (!proxyRes.ok || !ct.includes("json")) throw new Error("proxy unavailable");
-    data = await proxyRes.json();
-    if (!data.elements) throw new Error("bad response");
-  } catch {
-    // Localhost fallback: hit Overpass directly
-    const directRes = await fetch(`https://overpass-api.de/api/interpreter?data=${encodeURIComponent(query)}`);
-    data = await directRes.json();
+  const data = await res.json();
+  if (data.error) {
+    console.error("Google Places error:", JSON.stringify(data.error));
+    throw new Error(data.error.message ?? "Google Places error");
   }
-  const elements: any[] = data.elements ?? [];
 
-  return elements
-    .filter((el) => {
-      // Must have a name and valid coordinates
-      const elLat = el.lat ?? el.center?.lat;
-      const elLng = el.lon ?? el.center?.lon;
-      return el.tags?.name && elLat != null && elLng != null;
-    })
-    .map((el) => {
-      const elLat = el.lat ?? el.center?.lat;
-      const elLng = el.lon ?? el.center?.lon;
-      const dist = haversineKm(lat, lng, elLat, elLng);
-      const tags = el.tags;
-      const addressParts = [
-        tags["addr:housenumber"],
-        tags["addr:street"],
-        tags["addr:city"],
-      ].filter(Boolean);
+  const places: any[] = data.places ?? [];
+
+  return places
+    .map((place) => {
+      const placeLat = place.location.latitude;
+      const placeLng = place.location.longitude;
+      const dist = haversineKm(lat, lng, placeLat, placeLng);
       return {
-        id: el.id,
-        name: tags.name,
-        type:
-          tags.amenity === "hospital" || tags.healthcare === "hospital"
-            ? "Hospital"
-            : "Clinic",
-        address: addressParts.length > 0 ? addressParts.join(", ") : "Address unavailable",
+        id: place.name,
+        name: place.displayName?.text ?? "Unknown",
+        type: place.types?.includes("hospital") ? "Hospital" : "Clinic",
+        address: place.formattedAddress ?? "Address unavailable",
         distance: dist.toFixed(1) + " km",
         distanceNum: dist,
-        lat: elLat,
-        lng: elLng,
-        phone:
-          tags.phone ??
-          tags["contact:phone"] ??
-          tags["contact:mobile"] ??
-          tags.mobile ??
-          tags.telephone ??
-          tags["phone:ng"] ??
-          "",
-        emergency: tags.emergency === "yes",
+        lat: placeLat,
+        lng: placeLng,
+        phone: place.nationalPhoneNumber ?? "",
+        rating: place.rating,
+        openNow: place.regularOpeningHours?.openNow,
       } as ClinicResult;
     })
     .sort((a, b) => a.distanceNum - b.distanceNum);
@@ -136,13 +120,11 @@ export default function Clinics() {
     { key: "all", label: "All" },
     { key: "hospital", label: "Hospitals" },
     { key: "clinic", label: "Clinics" },
-    { key: "emergency", label: "Emergency" },
   ];
 
   const filteredResults = results.filter((c) => {
     if (selectedFilter === "hospital") return c.type === "Hospital";
     if (selectedFilter === "clinic") return c.type === "Clinic";
-    if (selectedFilter === "emergency") return c.emergency;
     return true;
   });
 
@@ -154,16 +136,12 @@ export default function Clinics() {
       const clinics = await fetchNearbyHospitals(lat, lng);
       setResults(clinics);
       if (clinics.length === 0) {
-        toast({ title: "No facilities found", description: "Try expanding your search area." });
+        toast({ title: "No facilities found", description: "Try a different area." });
       }
-    } catch {
-      // Only alert if we have nothing to show — don't interrupt visible results
-      setResults((prev) => {
-        if (prev.length === 0) {
-          toast({ title: "Search failed", description: "Could not reach hospital data. Please try again.", variant: "destructive" });
-        }
-        return prev;
-      });
+    } catch (e: any) {
+      if (results.length === 0) {
+        toast({ title: "Search failed", description: e?.message ?? "Could not load hospitals.", variant: "destructive" });
+      }
     } finally {
       setIsSearching(false);
     }
@@ -171,12 +149,19 @@ export default function Clinics() {
 
   const handleSearch = async () => {
     if (!searchAddress.trim()) return;
-    const coords = await geocodeAddress(searchAddress);
-    if (!coords) {
+    setIsSearching(true);
+    try {
+      const coords = await geocodeAddress(searchAddress);
+      if (!coords) {
+        toast({ title: "Address not found", description: "Try a more specific address.", variant: "destructive" });
+        setIsSearching(false);
+        return;
+      }
+      runSearch(coords.lat, coords.lng, searchAddress);
+    } catch {
       toast({ title: "Address not found", description: "Try a more specific address.", variant: "destructive" });
-      return;
+      setIsSearching(false);
     }
-    runSearch(coords.lat, coords.lng, searchAddress);
   };
 
   const handleUseMyLocation = () => {
@@ -187,18 +172,13 @@ export default function Clinics() {
     navigator.geolocation.getCurrentPosition(
       async (pos) => {
         const { latitude, longitude } = pos.coords;
-        // reverse geocode for a readable label
         let label = "Your current location";
         try {
-          const res = await fetch(
-            `https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&email=heymamacare@gmail.com`
-          );
+          const res = await fetch(`https://nominatim.openstreetmap.org/reverse?lat=${latitude}&lon=${longitude}&format=json&email=heymamacare@gmail.com`);
           const data = await res.json();
           label = data.display_name ?? label;
-          setSearchAddress(label);
-        } catch {
-          setSearchAddress(label);
-        }
+        } catch { /* use default label */ }
+        setSearchAddress(label);
         runSearch(latitude, longitude, label);
       },
       () => {
@@ -208,18 +188,11 @@ export default function Clinics() {
   };
 
   const handleGetDirections = (clinic: ClinicResult) => {
-    window.open(
-      `https://www.google.com/maps/dir/?api=1&destination=${clinic.lat},${clinic.lng}`,
-      "_blank"
-    );
+    window.open(`https://www.google.com/maps/dir/?api=1&destination=${clinic.lat},${clinic.lng}`, "_blank");
   };
 
   const handleCallClinic = (clinic: ClinicResult) => {
-    if (clinic.phone) {
-      window.location.href = `tel:${clinic.phone}`;
-    } else {
-      toast({ title: "No phone number", description: "This facility has no phone number listed." });
-    }
+    window.location.href = `tel:${clinic.phone}`;
   };
 
   const handleEmergencyCall = () => {
@@ -237,10 +210,7 @@ export default function Clinics() {
             <h1 className="text-3xl font-bold text-foreground mb-2">Find Maternal Care</h1>
             <p className="text-muted-foreground">Search for hospitals and clinics near any address</p>
           </div>
-          <Button
-            onClick={handleEmergencyCall}
-            className="bg-destructive hover:bg-destructive/90 animate-pulse-glow mt-4 sm:mt-0"
-          >
+          <Button onClick={handleEmergencyCall} className="bg-destructive hover:bg-destructive/90 animate-pulse-glow mt-4 sm:mt-0">
             <Phone className="h-4 w-4 mr-2" />
             Emergency: 199
           </Button>
@@ -270,7 +240,6 @@ export default function Clinics() {
               </Button>
             </div>
 
-            {/* Filters */}
             <div className="flex gap-2 flex-wrap">
               {filters.map((f) => (
                 <Button
@@ -289,21 +258,21 @@ export default function Clinics() {
         </Card>
 
         {/* Location status */}
-        {hasSearched && locationLabel && (
+        {hasSearched && locationLabel && !isSearching && (
           <div className="mb-6 p-4 bg-primary/10 rounded-lg border border-primary/20">
             <div className="flex items-center space-x-2">
               <MapPin className="h-5 w-5 text-primary shrink-0" />
               <div>
-                <p className="font-medium text-foreground">Searching near: {locationLabel}</p>
+                <p className="font-medium text-foreground">Near: {locationLabel}</p>
                 <p className="text-sm text-muted-foreground">
-                  Showing {filteredResults.length} facilit{filteredResults.length === 1 ? "y" : "ies"} within 10 km
+                  {filteredResults.length} facilit{filteredResults.length === 1 ? "y" : "ies"} within 10 km
                 </p>
               </div>
             </div>
           </div>
         )}
 
-        {/* Loading skeleton */}
+        {/* Loading */}
         {isSearching && (
           <div className="space-y-4">
             {[1, 2, 3].map((i) => (
@@ -326,14 +295,13 @@ export default function Clinics() {
                 <CardContent className="p-6">
                   <div className="grid lg:grid-cols-3 gap-6">
                     <div className="lg:col-span-2">
-                      <div className="flex items-start justify-between mb-3">
+                      <div className="flex items-start justify-between mb-3 flex-wrap gap-2">
                         <div>
                           <div className="flex items-center flex-wrap gap-2 mb-1">
                             <h3 className="text-xl font-bold text-foreground">{clinic.name}</h3>
-                            {clinic.emergency && (
-                              <Badge className="bg-destructive text-destructive-foreground">
-                                <Shield className="h-3 w-3 mr-1" />
-                                Emergency
+                            {clinic.openNow !== undefined && (
+                              <Badge className={clinic.openNow ? "bg-secondary text-secondary-foreground" : "bg-muted text-muted-foreground"}>
+                                {clinic.openNow ? "Open Now" : "Closed"}
                               </Badge>
                             )}
                           </div>
@@ -345,11 +313,17 @@ export default function Clinics() {
                             <MapPin className="h-4 w-4 mr-1 shrink-0" />
                             {clinic.address}
                           </p>
-                          <div className="flex items-center space-x-4 text-sm text-muted-foreground">
+                          <div className="flex items-center flex-wrap gap-4 text-sm text-muted-foreground">
                             <span className="flex items-center">
                               <NavIcon className="h-4 w-4 mr-1" />
                               {clinic.distance} away
                             </span>
+                            {clinic.rating && (
+                              <span className="flex items-center">
+                                <Star className="h-4 w-4 mr-1 text-yellow-500" />
+                                {clinic.rating.toFixed(1)}
+                              </span>
+                            )}
                             {clinic.phone && (
                               <span className="flex items-center">
                                 <Phone className="h-4 w-4 mr-1" />
@@ -362,31 +336,19 @@ export default function Clinics() {
                     </div>
 
                     <div className="space-y-3">
-                      <Button
-                        onClick={() => handleGetDirections(clinic)}
-                        className="w-full bg-gradient-primary hover:shadow-glow transition-all"
-                      >
+                      <Button onClick={() => handleGetDirections(clinic)} className="w-full bg-gradient-primary hover:shadow-glow transition-all">
                         <Car className="h-4 w-4 mr-2" />
                         Get Directions
                       </Button>
                       {clinic.phone ? (
-                        <Button
-                          variant="outline"
-                          onClick={() => handleCallClinic(clinic)}
-                          className="w-full hover:shadow-medical transition-shadow"
-                        >
+                        <Button variant="outline" onClick={() => handleCallClinic(clinic)} className="w-full hover:shadow-medical transition-shadow">
                           <Phone className="h-4 w-4 mr-2" />
                           Call Now
                         </Button>
                       ) : (
                         <Button
                           variant="outline"
-                          onClick={() =>
-                            window.open(
-                              `https://www.google.com/search?q=${encodeURIComponent(clinic.name + " hospital phone number")}`,
-                              "_blank"
-                            )
-                          }
+                          onClick={() => window.open(`https://www.google.com/search?q=${encodeURIComponent(clinic.name + " phone number")}`, "_blank")}
                           className="w-full hover:shadow-medical transition-shadow"
                         >
                           <Search className="h-4 w-4 mr-2" />
@@ -404,14 +366,14 @@ export default function Clinics() {
                 <div className="space-y-4">
                   <MapPin className="h-12 w-12 text-muted-foreground mx-auto" />
                   <h3 className="text-xl font-semibold text-foreground">No facilities found</h3>
-                  <p className="text-muted-foreground">Try changing the filter or searching a different area.</p>
+                  <p className="text-muted-foreground">Try a different filter or search a different area.</p>
                 </div>
               </Card>
             )}
           </div>
         )}
 
-        {/* Empty state before first search */}
+        {/* Empty state */}
         {!isSearching && !hasSearched && (
           <Card className="shadow-card bg-gradient-card text-center p-16">
             <div className="space-y-4">
